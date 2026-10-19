@@ -8,8 +8,11 @@
 #   export ANTHROPIC_API_KEY="sk-ant-..."
 #   docker compose -f docker-compose.quickstart.yml up --build
 #
+name: paperclip
+
 services:
   paperclip:
+    container_name: paperclip
     build:
       context: ..
       dockerfile: Dockerfile
@@ -30,8 +33,17 @@ services:
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
 
+      # ── Custom OpenAI-compatible providers (si.siglent.com) ──
+      SIGLENT_IN_API_KEY: "${SIGLENT_IN_API_KEY:-}"
+      SIGLENT_OUT_API_KEY: "${SIGLENT_OUT_API_KEY:-}"
+      PAPERCLIP_OPENCODE_PROVIDERS: "${PAPERCLIP_OPENCODE_PROVIDERS:-}"
+      PAPERCLIP_OPENCODE_SMALL_MODEL: "${PAPERCLIP_OPENCODE_SMALL_MODEL:-}"
+      PAPERCLIP_TELEMETRY_DISABLED: "${PAPERCLIP_TELEMETRY_DISABLED:-}"
+
       # ── Deployment settings ──
-      # "authenticated" requires login, "local_trusted" skips auth
+      # "authenticated" requires login, "local_trusted" skips auth.
+      # Docker port publishing needs HOST=0.0.0.0, so local_trusted (which
+      # requires a loopback bind) is not usable here; use authenticated/private.
       PAPERCLIP_DEPLOYMENT_MODE: "authenticated"
       # "private" = LAN only, "public" = internet-facing (use with TLS)
       PAPERCLIP_DEPLOYMENT_EXPOSURE: "private"
@@ -45,6 +57,9 @@ services:
       BETTER_AUTH_SECRET: "${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET must be set}"
       # Independent secret for signed approval-gated tool actions.
       PAPERCLIP_TOOL_ACTION_SIGNING_SECRET: "${PAPERCLIP_TOOL_ACTION_SIGNING_SECRET:-}"
+      # Independent secret for local agent JWTs (falls back to BETTER_AUTH_SECRET
+      # when unset; setting it keeps agent tokens separable from session signing).
+      PAPERCLIP_AGENT_JWT_SECRET: "${PAPERCLIP_AGENT_JWT_SECRET:-}"
     volumes:
       # Persistent data directory (database, agent workspaces, uploads)
       - "${PAPERCLIP_DATA_DIR:-../data/docker-paperclip}:/paperclip"
