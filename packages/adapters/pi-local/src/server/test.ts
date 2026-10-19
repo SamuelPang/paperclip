@@ -21,6 +21,7 @@ import {
 } from "@paperclipai/adapter-utils/execution-target";
 import { discoverPiModelsCached } from "./models.js";
 import { parsePiJsonl } from "./parse.js";
+import { preparePiRuntimeConfig } from "./runtime-config.js";
 import { SANDBOX_INSTALL_COMMAND } from "../index.js";
 
 function summarizeStatus(checks: AdapterEnvironmentCheck[]): AdapterEnvironmentTestResult["status"] {
@@ -125,7 +126,9 @@ export async function testEnvironment(
   for (const [key, value] of Object.entries(envConfig)) {
     if (typeof value === "string") env[key] = value;
   }
-  const runtimeEnv = normalizeEnv(ensurePathInEnv({ ...process.env, ...env }));
+  const baseRuntimeEnv = normalizeEnv(ensurePathInEnv({ ...process.env, ...env }));
+  const preparedPiRuntime = await preparePiRuntimeConfig({ env: baseRuntimeEnv });
+  const runtimeEnv = normalizeEnv({ ...baseRuntimeEnv, ...preparedPiRuntime.env });
 
   const cwdInvalid = checks.some((check) => check.code === "pi_cwd_invalid");
   if (cwdInvalid) {
@@ -329,6 +332,7 @@ export async function testEnvironment(
     }
   }
 
+  await preparedPiRuntime.cleanup();
   return {
     adapterType: ctx.adapterType,
     status: summarizeStatus(checks),
