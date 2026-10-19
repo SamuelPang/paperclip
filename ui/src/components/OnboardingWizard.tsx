@@ -1201,8 +1201,9 @@ function OnboardingWizardInner({
    * no longer offers — a selection the customer cannot see.
    */
   // Only harnesses with a managed-provider path can finish this step's
-  // credential flow. Cursor Cloud and Pi/Kimi-style adapters keep their own
-  // setup screens, so they stay out of the onboarding row.
+  // credential flow. Cursor Cloud and Kimi-style adapters keep their own
+  // setup screens, so they stay out of the onboarding row. Pi uses the same
+  // custom-gateway path as the other managed local harnesses.
   const visibleMoreAdapters = useMemo(
     () => moreAdapters.filter((adapter) => aiProviderForAdapter(adapter.type) !== undefined),
     [moreAdapters],

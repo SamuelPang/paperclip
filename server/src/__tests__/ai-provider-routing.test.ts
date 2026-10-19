@@ -93,6 +93,76 @@ describe("provider routing", () => {
     expect(projected.hermesConfig).not.toContain("selected-key");
     expect(Object.entries(projected.env).filter(([, value]) => value === "selected-key").map(([name]) => name)).toEqual(kind === "openrouter" ? ["OPENAI_API_KEY", "OPENROUTER_API_KEY"] : ["OPENAI_API_KEY"]);
   });
+  it.each(["chat", "responses", "messages"] as const)(
+    "projects a Pi managed %s route into its models.json registry",
+    (protocol) => {
+      const route = aiProviderRoutingSchema.parse({
+        kind: "gateway",
+        protocol,
+        auth: "bearer",
+        baseUrl: "https://gateway.example/v1",
+        models: [{ id: "sig-default" }],
+      });
+      const provider = protocol === "messages" ? "anthropic" : "openai";
+      expect(
+        isAiConnectionCompatible(
+          { provider, method: "api_key", routing: route },
+          "pi_local",
+        ),
+      ).toBe(true);
+      const projected = managedProviderRouting(
+        route,
+        "pi_local",
+        "fixture-key",
+        "sig-default",
+      );
+      expect(projected.config.model).toBe("paperclip/sig-default");
+      expect(JSON.stringify(projected.config)).not.toContain("fixture-key");
+      expect(JSON.parse(projected.env.PAPERCLIP_PI_PROVIDERS)).toEqual({
+        paperclip: {
+          baseUrl: "https://gateway.example/v1",
+          apiKey: "fixture-key",
+          api:
+            protocol === "messages"
+              ? "anthropic-messages"
+              : protocol === "responses"
+                ? "openai-responses"
+                : "openai-completions",
+          models: [{ id: "sig-default", name: "sig-default" }],
+        },
+      });
+    },
+  );
+  it("projects a Pi OpenRouter route with the openrouter prefix", () => {
+    const route = aiProviderRoutingSchema.parse({
+      kind: "openrouter",
+      protocol: "chat",
+      models: [{ id: "anthropic/claude-sonnet-4.6" }],
+    });
+    const projected = managedProviderRouting(
+      route,
+      "pi_local",
+      "fixture-key",
+      "anthropic/claude-sonnet-4.6",
+    );
+    expect(projected.config.model).toBe(
+      "openrouter/anthropic/claude-sonnet-4.6",
+    );
+    expect(projected.env.OPENROUTER_API_KEY).toBe("fixture-key");
+    expect(JSON.parse(projected.env.PAPERCLIP_PI_PROVIDERS)).toMatchObject({
+      openrouter: {
+        baseUrl: "https://openrouter.ai/api/v1",
+        apiKey: "fixture-key",
+        api: "openai-completions",
+        models: [
+          {
+            id: "anthropic/claude-sonnet-4.6",
+            name: "anthropic/claude-sonnet-4.6",
+          },
+        ],
+      },
+    });
+  });
   it("routes OpenRouter through each harness's protocol without putting secrets in Codex config", () => {
     const routing = aiProviderRoutingSchema.parse({
       kind: "openrouter",

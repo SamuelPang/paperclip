@@ -36,7 +36,13 @@ export function useConnectionModels(
     ? { kind: "openrouter", protocol: "chat", auth: "bearer", models: [] }
     : undefined);
   const modelOptions = discover
-    ? (catalog.data ?? []).map((m) => ({ ...m, id: harness === "opencode_local" ? m.id : m.id.replace(/^openrouter\//, "") }))
+    ? (catalog.data ?? []).map((m) => ({
+        ...m,
+        id:
+          harness === "opencode_local" || harness === "pi_local"
+            ? m.id
+            : m.id.replace(/^openrouter\//, ""),
+      }))
     : routing?.models ?? [];
   return effectiveRouting
     ? {

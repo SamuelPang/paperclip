@@ -779,6 +779,54 @@ describe("New agent setup", () => {
       expect(secrets.create).toHaveBeenCalledTimes(1);
     },
   );
+  it("configures a Pi custom gateway from models.json settings", async () => {
+    await render("pi_local");
+    const provider = container.querySelector<HTMLSelectElement>(
+      'select[aria-label="API key provider"]',
+    )!;
+    await act(async () => {
+      provider.value = "custom";
+      provider.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await settle();
+    await fill("Pi provider ID", "mass-in");
+    await fill("Pi gateway base URL", "https://si.siglent.com/v1");
+    await fill("Pi model IDs", "sig-default, sig-pro");
+    await fill("PAPERCLIP_PI_GATEWAY_KEY", "example-test-secret");
+    await fill("Model", "mass-in/sig-default");
+    await click("Run test");
+
+    const tested = api.testEnvironment.mock.calls.at(-1)![2];
+    expect(tested.adapterConfig.env.PAPERCLIP_PI_PROVIDERS).toEqual({
+      type: "plain",
+      value: JSON.stringify({
+        "mass-in": {
+          baseUrl: "https://si.siglent.com/v1",
+          apiKey: "{env:PAPERCLIP_PI_GATEWAY_KEY}",
+          api: "openai-completions",
+          models: [
+            { id: "sig-default", name: "sig-default" },
+            { id: "sig-pro", name: "sig-pro" },
+          ],
+        },
+      }),
+    });
+    expect(tested.testCredentials).toEqual({
+      PAPERCLIP_PI_GATEWAY_KEY: "example-test-secret",
+    });
+
+    await click("Finish setup");
+    const hired = api.hire.mock.calls.at(-1)![1];
+    expect(hired.adapterConfig.env.PAPERCLIP_PI_GATEWAY_KEY).toEqual({
+      type: "secret_ref",
+      secretId: "org-secret-1",
+      version: "latest",
+    });
+    expect(JSON.stringify(api.hire.mock.calls)).not.toContain(
+      "example-test-secret",
+    );
+  });
+
   it("connects OpenRouter before testing and hiring OpenCode without copying credentials into the agent", async () => {
     await render("opencode_local");
     const model = "openrouter/anthropic/claude-sonnet-4.6";

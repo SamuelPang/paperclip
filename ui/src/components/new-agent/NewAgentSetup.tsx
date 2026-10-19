@@ -149,6 +149,11 @@ function Setup({
   const showModel = !isDot && !["cursor_cloud", "hermes_gateway"].includes(adapterType);
   const [allowUnmeteredProvider, setAllowUnmeteredProvider] = useState(false);
   const [gatewayUrl, setGatewayUrl] = useState("");
+  // Pi has no base-URL flag; it resolves custom endpoints from models.json.
+  // These fields build that provider entry for this agent.
+  const [piCustomProviderId, setPiCustomProviderId] = useState("custom");
+  const [piCustomBaseUrl, setPiCustomBaseUrl] = useState("");
+  const [piCustomModels, setPiCustomModels] = useState("");
   const [kimiModel, setKimiModel] = useState("");
   const [kimiBaseUrl, setKimiBaseUrl] = useState("");
   const [kimiProtocol, setKimiProtocol] = useState("kimi");
@@ -301,8 +306,10 @@ function Setup({
   const canLogin =
     environment?.driver === "sandbox" &&
     caps.data?.sandboxProviders?.[sandboxProvider]?.supportsLoginPty === true;
-  const envKey =
-    SETUP_CREDENTIAL_KEYS[adapterType] ?? providerKeys[provider] ?? "API_KEY";
+  const usingPiCustomProvider = brandType === "pi_local" && provider === "custom" && !aiBinding;
+  const envKey = usingPiCustomProvider
+    ? "PAPERCLIP_PI_GATEWAY_KEY"
+    : (SETUP_CREDENTIAL_KEYS[adapterType] ?? providerKeys[provider] ?? "API_KEY");
   const savedKey = userSecrets.data?.find(
     (entry) => entry.definition.key === envKey && entry.secret,
   );
@@ -421,12 +428,47 @@ function Setup({
           : {}),
       };
     }
+    if (usingPiCustomProvider) {
+      const providerId = piCustomProviderId.trim();
+      const modelIds = piCustomModels
+        .split(",")
+        .map((id) => id.trim())
+        .filter(Boolean);
+      config.env = {
+        ...((config.env as object) ?? {}),
+        PAPERCLIP_PI_PROVIDERS: {
+          type: "plain",
+          value: JSON.stringify({
+            [providerId]: {
+              baseUrl: piCustomBaseUrl.trim().replace(/\/+$/, ""),
+              apiKey: `{env:${envKey}}`,
+              api: "openai-completions",
+              models: modelIds.map((id) => ({ id, name: id })),
+            },
+          }),
+        },
+      };
+    }
     return config;
   }
   function preparedConfig(nextConnection = connection) {
     if (isDot && !allowUnmeteredProvider) throw new Error("Acknowledge external provider billing before creating your Dot agent.");
     if (multiProvider && (!model.trim() || !model.includes("/")))
       throw new Error("Choose or enter a model in provider/model format.");
+    if (usingPiCustomProvider) {
+      const providerId = piCustomProviderId.trim();
+      if (!providerId) throw new Error("Enter a Pi provider ID.");
+      try {
+        const url = new URL(piCustomBaseUrl.trim());
+        if (!["https:", "http:"].includes(url.protocol)) throw new Error();
+      } catch {
+        throw new Error("Enter the Pi gateway base URL.");
+      }
+      if (!piCustomModels.trim())
+        throw new Error("Enter at least one Pi model ID.");
+      if (!model.trim().startsWith(`${providerId}/`))
+        throw new Error(`Enter a model as ${providerId}/<model-id>.`);
+    }
     if (
       adapterType === "cursor_cloud" &&
       !/^https:\/\/github\.com\/[^/]+\/[^/]+/.test(repository.trim())
@@ -896,6 +938,7 @@ function Setup({
                         </>}
                         {!connectionAdapter && aiProviderForAdapter(brandType) && (
                           <AiConnectionField companyId={companyId} agentName={name} adapterType={brandType} model={model} environmentId={environmentId ?? undefined} value={aiBinding}
+                            preferAdvanced={brandType === "hermes_local" || brandType === "pi_local"}
                             onChange={binding => { binding.mode !== "router" && setRuntimeAiBinding(binding); resetTest(); }} />
                         )}
                         {(connectionModels ? connectionModels.error : models.error) && <p role="alert" className="text-sm text-destructive">Could not load models. Retry or enter a model ID manually.</p>}
@@ -928,6 +971,24 @@ function Setup({
                                     setProvider(nextProvider);
                                     setApiKey("");
                                     setProviderBinding(null);
+                                  } else if (
+                                    brandType === "pi_local" &&
+                                    nextProvider &&
+                                    !PROVIDER_ENV_KEYS[nextProvider]
+                                  ) {
+                                    // An unknown prefix is a provider supplied
+                                    // through models.json, not a built-in.
+                                    if (provider !== "custom") {
+                                      setProvider("custom");
+                                      setApiKey("");
+                                      setProviderBinding(null);
+                                    }
+                                    setPiCustomProviderId(nextProvider);
+                                    const rest = value.slice(
+                                      nextProvider.length + 1,
+                                    );
+                                    if (rest && !piCustomModels.trim())
+                                      setPiCustomModels(rest);
                                   }
                                   resetTest();
                                 }}
@@ -1000,8 +1061,61 @@ function Setup({
                                               }[key] ?? key)}
                                     </option>
                                   ))}
+                                  {brandType === "pi_local" && (
+                                    <option value="custom">Custom gateway</option>
+                                  )}
                                 </select>
                               </Field>
+                            )}
+                            {brandType === "hermes_local" && (
+                              <p className="text-xs text-muted-foreground sm:col-span-2">
+                                For a custom gateway URL and key, use the AI
+                                connection above and choose Custom gateway.
+                              </p>
+                            )}
+                            {usingPiCustomProvider && (
+                              <>
+                                <Field label="Provider ID">
+                                  <Input
+                                    aria-label="Pi provider ID"
+                                    value={piCustomProviderId}
+                                    onChange={(event) => {
+                                      setPiCustomProviderId(event.target.value);
+                                      resetTest();
+                                    }}
+                                    placeholder="mass-in"
+                                  />
+                                </Field>
+                                <Field label="Gateway base URL">
+                                  <Input
+                                    aria-label="Pi gateway base URL"
+                                    value={piCustomBaseUrl}
+                                    onChange={(event) => {
+                                      setPiCustomBaseUrl(event.target.value);
+                                      resetTest();
+                                    }}
+                                    placeholder="https://si.siglent.com/v1"
+                                  />
+                                </Field>
+                                <div className="sm:col-span-2">
+                                  <Field label="Model IDs (comma separated)">
+                                    <Input
+                                      aria-label="Pi model IDs"
+                                      value={piCustomModels}
+                                      onChange={(event) => {
+                                        setPiCustomModels(event.target.value);
+                                        resetTest();
+                                      }}
+                                      placeholder="sig-default, sig-pro"
+                                    />
+                                  </Field>
+                                  <p className="mt-1 text-xs text-muted-foreground">
+                                    Pi routes these through models.json. Set the
+                                    model above to provider/model, for example
+                                    mass-in/sig-default.
+                                  </p>
+                                </div>
+                              </>
                             )}
                             <div
                               className={

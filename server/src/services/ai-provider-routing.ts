@@ -62,6 +62,27 @@ export function managedProviderRouting(
     });
     env.OPENCODE_DISABLE_PROJECT_CONFIG = "true";
     config.model = aiRoutingModel(route, harness, model);
+  } else if (harness === "pi_local") {
+    const provider = route.kind === "openrouter" ? "openrouter" : "paperclip";
+    if (route.kind === "openrouter") env.OPENROUTER_API_KEY = credential;
+    const id = model.startsWith(`${provider}/`)
+      ? model.slice(provider.length + 1)
+      : model;
+    const api =
+      route.protocol === "messages"
+        ? "anthropic-messages"
+        : route.protocol === "responses"
+          ? "openai-responses"
+          : "openai-completions";
+    env.PAPERCLIP_PI_PROVIDERS = JSON.stringify({
+      [provider]: {
+        baseUrl,
+        ...(route.auth === "none" ? {} : { apiKey: credential }),
+        api,
+        models: id ? [{ id, name: id }] : [],
+      },
+    });
+    config.model = aiRoutingModel(route, harness, model);
   } else if (harness === "hermes_local") {
     env.OPENAI_BASE_URL = baseUrl;
     env.OPENAI_API_KEY = credential;

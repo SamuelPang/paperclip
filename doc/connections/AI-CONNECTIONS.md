@@ -579,9 +579,9 @@ The catalog tags these entries `model-provider`; no category UI is shown.
 Responses-compatible gateways such as Emissary use the Responses API row.
 The native subscription/API-key onboarding remains the default. The connect step
 also offers **Use a custom gateway instead** (protocol, base URL, API key, and
-model IDs) without leaving onboarding. OpenCode is reachable under **More
-adapters**, and a deployment that sets `PAPERCLIP_OPENCODE_PROVIDERS` can choose
-**Use the provider configured on this server** instead of creating an AI
+model IDs) without leaving onboarding. OpenCode and Pi are reachable under
+**More adapters**, and a deployment that sets `PAPERCLIP_OPENCODE_PROVIDERS` can
+choose **Use the provider configured on this server** instead of creating an AI
 connection. A gateway connection is still a normal AI connection: URLs and
 credentials belong to it, and OpenCode runs the model as `paperclip/<id>`.
 Provider choices show the existing local brand artwork and reuse the existing
@@ -603,6 +603,7 @@ credentials belong to the connection; the model belongs to the agent.
 | Codex legacy and Codex New Runner (app-server) | OpenRouter; custom/local OpenAI Responses endpoints |
 | Claude legacy and Claude New Runner (ACPX) | OpenRouter; custom/local Anthropic Messages; Bedrock API key |
 | OpenCode legacy and New Runner | OpenRouter; custom/local Chat Completions |
+| Pi local | OpenRouter; custom/local Chat Completions, Responses, and Messages; per-agent `PAPERCLIP_PI_PROVIDERS` |
 | Hermes local | OpenRouter; custom/local Chat Completions |
 | Gemini CLI, Grok | Their native API connections; custom routes are not advertised |
 
@@ -612,9 +613,19 @@ environment probes and task execution. The settings file contains no credential.
 
 OpenClaw Gateway, Hermes Gateway, Claude Managed, AWS AgentCore, Process, HTTP,
 and legacy `acpx_local` are excluded: external agents retain their own model
-configuration, and `acpx_local` is retired. Cursor/Pi/Copilot custom routing,
+configuration, and `acpx_local` is retired. Cursor/Copilot custom routing,
 Vertex, ambient AWS identity, arbitrary authentication headers, and automatic
-catalog discovery for custom gateways are not part of this implementation.
+catalog discovery for custom gateways are not part of managed connections.
+Pi also accepts its own per-agent `PAPERCLIP_PI_PROVIDERS` configuration.
+
+The production image installs OpenCode, Pi (`pi` 0.74.0), and Hermes (`hermes`
+0.19.0 in an isolated Python venv). New-agent setup configures a Pi custom
+gateway with a provider ID, base URL, model IDs, and API key; the adapter
+materializes them as Pi's `models.json`. Pi managed connections project the same
+registry as `paperclip/<id>` or `openrouter/<id>`. Hermes local custom endpoints
+use the managed Chat Completions route, which writes an isolated `config.yaml`.
+Hermes Gateway keeps its own API base URL and `API_SERVER_KEY`. Do not combine a
+managed AI connection with `PAPERCLIP_PI_PROVIDERS` on the same Pi agent.
 
 OpenRouter connections without an explicit model list automatically load its public
 [model catalog](https://openrouter.ai/docs/api/api-reference/models/list-all-models-and-their-properties),
