@@ -20,8 +20,8 @@ import {
  */
 
 /** How a source gets authenticated. Every tile is in the same mode at once. */
-export type CredentialMode = "subscription" | "api";
-export type ModelConnectionMode = CredentialMode | "advanced";
+export type CredentialMode = "subscription" | "api" | "advanced";
+export type ModelConnectionMode = CredentialMode;
 
 export type ModelSource = {
   id: string;

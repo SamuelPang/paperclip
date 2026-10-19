@@ -20,22 +20,37 @@ import { LINK_LABEL_FADE_IN, LINK_LABEL_FADE_OUT } from "./onboarding-motion";
 const LINK_LABEL: Record<CredentialMode, string> = {
   subscription: "Use subscription instead",
   api: "Use API key instead",
+  advanced: "Use a custom gateway instead",
 };
 const NATIVE_MODES: CredentialMode[] = ["subscription", "api"];
-
-const OTHER_MODE: Record<CredentialMode, CredentialMode> = {
-  subscription: "api",
-  api: "subscription",
-};
 
 export function CredentialModeLink({
   mode,
   onChange,
+  modes = NATIVE_MODES,
 }: {
   mode: CredentialMode;
   onChange: (next: CredentialMode) => void;
+  /**
+   * Which alternatives to offer. Onboarding adds `advanced` so a gateway can be
+   * connected during setup; the agent-creation flows keep the native pair
+   * because their advanced tile is rendered separately.
+   */
+  modes?: CredentialMode[];
 }) {
-  return <ModeLink destination={OTHER_MODE[mode]} onClick={() => onChange(OTHER_MODE[mode])} modes={NATIVE_MODES} />;
+  const destinations = modes.filter((candidate) => candidate !== mode);
+  return (
+    <div className="flex flex-wrap items-center">
+      {destinations.map((destination) => (
+        <ModeLink
+          key={destination}
+          destination={destination}
+          onClick={() => onChange(destination)}
+          modes={modes}
+        />
+      ))}
+    </div>
+  );
 }
 
 function ModeLink({ destination, onClick, modes }: {

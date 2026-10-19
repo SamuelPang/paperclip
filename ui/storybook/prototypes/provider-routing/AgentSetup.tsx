@@ -496,7 +496,7 @@ export function Onboarding({
         mode={mode}
         onSelect={() => {}}
       />
-      <CredentialModeLink mode={mode} onChange={setMode} />
+      <CredentialModeLink mode={mode} onChange={(next) => { if (next !== "advanced") setMode(next); }} />
       {savedConnection ? (
         <ConnectionChoiceList
           selectedId="chatgpt"

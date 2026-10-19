@@ -973,6 +973,244 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
       });
     });
 
+    describe("OpenCode against a custom gateway or the server provider", () => {
+      beforeEach(() => {
+        mockAdapterRegistry.list = [
+          { type: "claude_local" },
+          { type: "codex_local" },
+          { type: "opencode_local" },
+        ];
+        mockCompaniesApi.create.mockResolvedValue({ id: "company-new", issuePrefix: "INI" });
+        mockCompaniesApi.list.mockResolvedValue([]);
+        mockCompany.companies = [];
+        mockCompany.loading = false;
+        mockCompany.error = null;
+        mockDialog.onboardingOpen = true;
+        mockDialog.onboardingOptions = {};
+        mockDialog.onboardingRouteDismissed = false;
+        mockSecretsApi.list.mockReset().mockResolvedValue([]);
+        mockSecretsApi.listMyUserSecrets.mockReset().mockResolvedValue([]);
+        mockAgentsApi.adapterModels.mockReset().mockResolvedValue([
+          { id: "mass-in/sig-default", label: "sig-default" },
+        ]);
+        mockAgentsApi.testEnvironment.mockReset().mockResolvedValue({
+          adapterType: "opencode_local",
+          status: "pass" as const,
+          checks: [],
+          testedAt: new Date().toISOString(),
+        });
+        mockAgentsApi.hire.mockReset().mockResolvedValue({ agent: { id: "agent-1" }, approval: null });
+        mockAgentsApi.list.mockReset().mockResolvedValue([]);
+        mockAgentsApi.getAdapterAuthSignal.mockReset().mockResolvedValue({ status: "present" });
+        mockAgentsApi.getActiveAdapterAuthLoginSession.mockReset()
+          .mockRejectedValue(new ApiError("Not found", 404, null));
+        mockAgentsApi.getActiveClaudeSetupTokenLoginSession.mockReset()
+          .mockRejectedValue(new ApiError("Not found", 404, null));
+        mockAgentsApi.getClaudeOAuthTokenStatus.mockReset()
+          .mockRejectedValue(new ApiError("Not found", 404, null));
+        managedApi.create.mockReset().mockResolvedValue({
+          connectionId: "managed-connection",
+          grantId: "managed-grant",
+        });
+        managedApi.list.mockReset().mockResolvedValue({
+          currentUserId: "user-1",
+          connections: [{
+            id: "managed-connection",
+            routing: {
+              kind: "gateway",
+              protocol: "chat",
+              auth: "bearer",
+              baseUrl: "https://si.siglent.com/v1",
+              models: [{ id: "sig-default" }],
+            },
+          }],
+        } as never);
+        mockAdapterBuild.buildAdapterConfig.mockReset().mockImplementation(
+          ((values: { model?: string }) => ({ model: values.model })) as unknown as () => Record<string, unknown>,
+        );
+      });
+
+      afterEach(() => {
+        // `mockReset` and `mockImplementation` outlive `clearAllMocks`, so put
+        // the module defaults back for the suites that follow.
+        managedApi.list.mockReset().mockResolvedValue({ currentUserId: "user-1", connections: [] });
+        mockAdapterBuild.buildAdapterConfig.mockReset().mockReturnValue({});
+        mockAgentsApi.adapterModels.mockReset().mockResolvedValue([]);
+      });
+
+      async function openOpenCodeStep(options: {
+        useCustomGateway?: boolean;
+        useServerProvider?: boolean;
+        model?: string;
+      } = {}) {
+        window.localStorage.setItem(
+          ONBOARDING_STORAGE_KEY,
+          JSON.stringify({ step: 1, companyName: "Initech" }),
+        );
+
+        const { root, queryClient } = render();
+        await renderWizardView(root, queryClient);
+        await flushReact();
+
+        const clickByText = async (match: (text: string) => boolean) => {
+          const el = [...document.body.querySelectorAll("button")].find((b) =>
+            match(b.getAttribute("aria-label")?.startsWith("Use ") ? b.getAttribute("aria-label")! : b.textContent?.trim() ?? ""),
+          )!;
+          await act(async () => {
+            el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+          });
+          await flushReact();
+        };
+
+        await clickByText((t) => t.startsWith("Continue"));
+        const agentField = document.body.querySelector(
+          "#onboarding-agent-name",
+        ) as HTMLInputElement;
+        await act(async () => {
+          setControlledValue(agentField, "Ada");
+        });
+        await flushReact();
+        await clickByText((t) => isArcPrimary(t));
+        expect(document.body.textContent).toContain("Connect a model");
+
+        // The mode is chosen before the source: picking a tile collapses the
+        // link row and starts the connect sequence.
+        if (options.useCustomGateway) {
+          await clickByText((t) => t.startsWith("Use a custom gateway"));
+        }
+
+        // OpenCode is in the "More adapters" disclosure; the tile is in the DOM
+        // even while the disclosure is closed, so a synthetic click reaches it.
+        const openCodeTile = [...document.body.querySelectorAll('button[role="radio"]')]
+          .find((button) => button.textContent?.includes("opencode_local"))!;
+        await act(async () => {
+          openCodeTile.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        });
+        await flushReact();
+
+        const modelField = document.body.querySelector(
+          "#onboarding-opencode-model",
+        ) as HTMLInputElement;
+        await act(async () => {
+          setControlledValue(modelField, options.model ?? "mass-in/sig-default");
+        });
+        await flushReact();
+
+        if (options.useServerProvider) {
+          await clickByText((t) => t.startsWith("Use the provider configured on this server"));
+        }
+
+        // The collapse beat, the card mount, and the connection queries each
+        // land on their own render.
+        for (let i = 0; i < 5; i++) await flushReact();
+        return { root, clickByText };
+      }
+
+      it("connects a Custom Gateway and hires with its binding", async () => {
+        const { root, clickByText } = await openOpenCodeStep({
+          useCustomGateway: true,
+          model: "sig-default",
+        });
+        expect(document.body.textContent).toContain("Provider URL");
+
+        const urlField = document.body.querySelector(
+          'input[aria-label="Provider URL"]',
+        ) as HTMLInputElement;
+        const keyField = document.body.querySelector(
+          'input[aria-label="API key"]',
+        ) as HTMLInputElement;
+        const modelsField = document.body.querySelector(
+          'input[aria-label="Model IDs"]',
+        ) as HTMLInputElement;
+        await act(async () => {
+          setControlledValue(urlField, "https://si.siglent.com/v1");
+          setControlledValue(keyField, "sk-gateway");
+          setControlledValue(modelsField, "sig-default");
+        });
+        await flushReact();
+
+        const form = document.body.querySelector("form")!;
+        await act(async () => {
+          form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+        });
+        for (let i = 0; i < 5; i++) await flushReact();
+
+        expect(managedApi.create).toHaveBeenCalledWith(
+          "company-new",
+          expect.objectContaining({
+            provider: "openai",
+            method: "api_key",
+            routing: expect.objectContaining({
+              kind: "gateway",
+              protocol: "chat",
+              baseUrl: "https://si.siglent.com/v1",
+            }),
+            apiKey: "sk-gateway",
+          }),
+        );
+        expect(document.body.textContent).toContain("Custom gateway connected.");
+
+        await clickByText((t) => isArcPrimary(t));
+
+        const testArgs = mockAgentsApi.testEnvironment.mock.calls.at(-1) as unknown[];
+        expect(testArgs[2]).toMatchObject({
+          aiConnection: {
+            provider: "openai",
+            method: "api_key",
+            mode: "delegated",
+            connectionId: "managed-connection",
+            grantId: "managed-grant",
+          },
+          adapterConfig: { model: "paperclip/sig-default" },
+        });
+
+        const hireBody = (mockAgentsApi.hire.mock.calls.at(-1) as unknown[])[1] as {
+          adapterConfig: { model: string };
+          runtimeConfig: { aiConnection?: unknown };
+        };
+        expect(hireBody.adapterConfig.model).toBe("paperclip/sig-default");
+        expect(hireBody.runtimeConfig.aiConnection).toEqual({
+          provider: "openai",
+          method: "api_key",
+          mode: "delegated",
+          connectionId: "managed-connection",
+          grantId: "managed-grant",
+        });
+        expect(JSON.stringify(hireBody)).not.toContain("sk-gateway");
+
+        await act(async () => root.unmount());
+      });
+
+      it("hires with no AI connection when the server already provides the provider", async () => {
+        // The host CLI need not list the server's providers; the server
+        // supplies them at run time, so discovery must not block the hire.
+        mockAgentsApi.adapterModels.mockResolvedValue([]);
+        const { root, clickByText } = await openOpenCodeStep({
+          useServerProvider: true,
+          model: "mass-in/sig-default",
+        });
+        expect(document.body.textContent).toContain(
+          "Using the provider configured on this server.",
+        );
+
+        await clickByText((t) => isArcPrimary(t));
+
+        const testArgs = mockAgentsApi.testEnvironment.mock.calls.at(-1) as unknown[];
+        expect(testArgs[2]).not.toHaveProperty("aiConnection");
+
+        const hireBody = (mockAgentsApi.hire.mock.calls.at(-1) as unknown[])[1] as {
+          adapterConfig: { model: string };
+          runtimeConfig: { aiConnection?: unknown };
+        };
+        expect(hireBody.adapterConfig.model).toBe("mass-in/sig-default");
+        expect(hireBody.runtimeConfig.aiConnection).toBeUndefined();
+        expect(managedApi.create).not.toHaveBeenCalled();
+        expect(mockSecretsApi.createMyUserSecret).not.toHaveBeenCalled();
+
+        await act(async () => root.unmount());
+      });
+    });
+
     it("re-probes rather than reusing a pass when the credential mode changes", async () => {
       mockAgentsApi.testEnvironment.mockResolvedValue({
         adapterType: "claude_local",

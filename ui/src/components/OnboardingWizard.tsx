@@ -1,5 +1,6 @@
 import type { AgentRunnerChoice } from "@paperclipai/shared";
-import { agentHarnessType } from "@paperclipai/shared";
+import { agentHarnessType, aiRoutingModel } from "@paperclipai/shared";
+import { AiProviderSetup } from "./ai-connections/AiProviderSetup";
 import { adaptersApi } from "../api/adapters";
 import { CodexRunnerSelect } from "./CodexRunnerSelect";
 import { healthApi } from "@/api/health";
@@ -685,6 +686,24 @@ function OnboardingWizardInner({
    * `localStorage`, and a provider key does not belong there.
    */
   const [apiKey, setApiKey] = useState("");
+  /**
+   * The Custom Gateway connection created on this step.
+   *
+   * Holds the same `{ connectionId, grantId }` binding the rest of the app
+   * uses; the credential itself stays on the server. It is safe to keep in the
+   * draft (ids only) so a reload does not drop a connection the customer just
+   * made.
+   */
+  const [advancedBinding, setAdvancedBinding] = useState<AiConnectionBinding | null>(
+    (saved?.advancedBinding as AiConnectionBinding | null | undefined) ?? null,
+  );
+  /**
+   * C: hire OpenCode against the provider the server already exposes
+   * (`PAPERCLIP_OPENCODE_PROVIDERS`). No per-agent credential is stored and no
+   * managed connection is created.
+   */
+  const [useServerProvider, setUseServerProvider] = useState(Boolean(saved?.useServerProvider));
+  const usesServerProvider = adapterType === "opencode_local" && useServerProvider;
   // The owner's stored Claude subscription login, read right before the hire
   // (see handleGiveHeartbeat). Onboarding applies it with no extra control,
   // so nothing else reads this state yet.
@@ -765,6 +784,8 @@ function OnboardingWizardInner({
   const managedProvider = aiProviderForAdapter(adapterType);
   const managedSubscriptionProvider = managedProvider === "anthropic" || managedProvider === "openai" || managedProvider === "xai" ? managedProvider : undefined;
   function managedBindingForStep(): AiConnectionBinding | undefined {
+    if (usesServerProvider) return undefined;
+    if (credentialMode === "advanced") return advancedBinding ?? undefined;
     if (credentialMode === "api") return selectedApiKey?.aiConnection ?? (
       !selectedApiKey && apiKeySecretRef.current?.companyId === createdCompanyId && apiKeySecretRef.current.envKey === apiKeyEnvKeyFor(adapterType)
         ? apiKeySecretRef.current.aiConnection : undefined);
@@ -809,6 +830,9 @@ function OnboardingWizardInner({
     setCreatedProjectId(null);
     setCreatedIssueRef(null);
     setCreatedAgentId(null);
+    // A connection belongs to the company it was created in.
+    setAdvancedBinding(null);
+    setUseServerProvider(false);
   }
 
   // Sync step and company when onboarding opens with explicit options.
@@ -916,8 +940,9 @@ function OnboardingWizardInner({
     const state = {
       step, companyName,
       agentName, agentAppearance, agentRole, adapterType, runner, cwd, model, command, args, url,
-      // The mode, never the key: this blob is localStorage.
-      credentialMode, credentialModeChoice,
+      // The mode, never the key: this blob is localStorage. A gateway binding
+      // is ids only, so it is safe to keep with the draft.
+      credentialMode, credentialModeChoice, useServerProvider, advancedBinding,
       createdCompanyId, createdCompanyPrefix, createdAgentId,
       createdCompanyGoalId, createdProjectId, createdIssueRef,
     };
@@ -925,7 +950,7 @@ function OnboardingWizardInner({
   }, [
     effectiveOnboardingOpen, step, companyName,
     agentName, agentAppearance, agentRole, adapterType, runner, cwd, model, command, args, url,
-    credentialMode, credentialModeChoice,
+    credentialMode, credentialModeChoice, useServerProvider, advancedBinding,
     createdCompanyId, createdCompanyPrefix, createdAgentId,
     createdCompanyGoalId, createdProjectId, createdIssueRef,
   ]);
@@ -1041,7 +1066,7 @@ function OnboardingWizardInner({
     provider: managedSubscriptionProvider ?? "anthropic", method: "subscription",
     name: `My ${CONNECT_SOURCE_NAMES[adapterType] ?? managedProvider} subscription`,
     ownership: "personal", agentIds: [], allAgents: true,
-  }, effectiveOnboardingOpen && step === 4 && canUseLocalLogin && credentialMode !== "api" &&
+  }, effectiveOnboardingOpen && step === 4 && canUseLocalLogin && credentialMode === "subscription" &&
     Boolean(managedProvider) && !savedSubscription && !savedKeys.storedLogin.data && !managedBindingForStep(),
   );
   // A result from a previous selection must not hire or advance this wizard.
@@ -1115,7 +1140,7 @@ function OnboardingWizardInner({
       Boolean(createdCompanyId) && effectiveOnboardingOpen && step === 4 && canShowAdapterLogin,
   });
   useEffect(() => {
-    if (!activeLoginSessionQuery.data || credentialMode === "api" || savedSubscription || savedKeys.storedLogin.data) return;
+    if (!activeLoginSessionQuery.data || credentialMode !== "subscription" || savedSubscription || savedKeys.storedLogin.data) return;
     // Re-derive the row's answer along with the sequence: a resumed session
     // implies a source was already picked, and the row stays a question
     // otherwise (see `sourcePicked` above).
@@ -1175,8 +1200,16 @@ function OnboardingWizardInner({
    * `adapterType` alone, because a restored draft can name an adapter this step
    * no longer offers — a selection the customer cannot see.
    */
+  // Only harnesses with a managed-provider path can finish this step's
+  // credential flow. Cursor Cloud and Pi/Kimi-style adapters keep their own
+  // setup screens, so they stay out of the onboarding row.
+  const visibleMoreAdapters = useMemo(
+    () => moreAdapters.filter((adapter) => aiProviderForAdapter(adapter.type) !== undefined),
+    [moreAdapters],
+  );
+  const allAdapterChoices = [...recommendedAdapters, ...visibleMoreAdapters];
   const sourceSelected =
-    sourcePicked && recommendedAdapters.some((opt) => opt.type === adapterType);
+    sourcePicked && allAdapterChoices.some((opt) => opt.type === adapterType);
 
   /**
    * Whether the connect step may advance.
@@ -1206,7 +1239,7 @@ function OnboardingWizardInner({
    * sandbox, or a local CLI account — Connect verifies credentials before the hire.
    */
   const connectStepNeedsLogin = Boolean(
-    credentialMode !== "api" &&
+    credentialMode === "subscription" &&
       // Connection-list invalidation can arrive before the login's completion
       // poll. Keep its controller mounted until it reports success; otherwise
       // the saved account replaces the panel and "Connecting" never finishes.
@@ -1235,7 +1268,7 @@ function OnboardingWizardInner({
 
   /** Without browser login, show instructions for the selected execution environment. */
   const connectStepHasNoSandbox =
-    credentialMode !== "api" && !canShowAdapterLogin && !authSignalUndecided;
+    credentialMode === "subscription" && !canShowAdapterLogin && !authSignalUndecided;
 
   /*
     The sequence's derived state. Space and visibility are separate throughout:
@@ -1247,8 +1280,14 @@ function OnboardingWizardInner({
     connectPhase !== "idle" && connectPhase !== "unwindRow" && sourceSelected;
   const connectProgress = adapterEnvLoading ? "Testing connection…" : loading ? "Connecting…" : null;
   const hasSavedSubscription = Boolean(savedSubscription || savedKeys.storedLogin.data ||
-    (credentialMode !== "api" && managedBindingForStep()));
-  const connectHasCard = credentialMode === "api" || connectStepNeedsLogin || connectStepHasNoSandbox || Boolean(connectProgress);
+    (credentialMode === "subscription" && managedBindingForStep()));
+  const connectHasCard = !usesServerProvider && (
+    credentialMode === "api" ||
+    credentialMode === "advanced" ||
+    connectStepNeedsLogin ||
+    connectStepHasNoSandbox ||
+    Boolean(connectProgress)
+  );
   const connectCardLive =
     connectHasCard &&
     (connectPhase === "loading" ||
@@ -1406,7 +1445,10 @@ function OnboardingWizardInner({
                 label: "Connect",
                 icon: "arrow",
                 disabled:
-                  !connectStepReady || (credentialMode === "api" && !apiKey.trim() && !selectedApiKey),
+                  !connectStepReady ||
+                  (!usesServerProvider && credentialMode === "api" && !apiKey.trim() && !selectedApiKey) ||
+                  (credentialMode === "advanced" && !advancedBinding) ||
+                  (usesServerProvider && !isValidOpenCodeModelId(model.trim())),
               }
           : // Nothing is chosen on arrival, and the row is what chooses. Until
             // it has been answered the button has nothing to do.
@@ -1456,12 +1498,45 @@ function OnboardingWizardInner({
       setConnectPhase("waiting");
       return;
     }
+    // The button's gates, applied to the keyboard path too. The advanced form
+    // and the server-provider choice have no API key to check, so each mode
+    // contributes its own readiness condition here.
+    if (connectPhase === "ready" && !connectStepNeedsLogin) {
+      if (credentialMode === "advanced" && !advancedBinding) return;
+      if (usesServerProvider && !isValidOpenCodeModelId(model.trim())) return;
+      if (!usesServerProvider && credentialMode === "api" && !apiKey.trim() && !selectedApiKey) return;
+    }
     // The hold owns the hire once "Connecting" is showing. That now starts at
     // the paste, before the credential exists, so Cmd+Enter here would hire
     // against a source with nothing to run on.
     if (connectPhase === "connecting") return;
     if (connectStepLoggingIn) return;
     void handleGiveHeartbeat();
+  }
+
+  /**
+   * Answer the source row. Used by both the recommended row and the "More
+   * adapters" row so the two cannot drift.
+   */
+  function selectSource(id: string) {
+    if (connectPhase !== "idle") return;
+    autoConnectStartedRef.current = false;
+    setSourcePicked(true);
+    const changed = id !== adapterType;
+    if (changed) {
+      // A connection and the server-provider choice are specific to the
+      // harness/model that created them.
+      setAdvancedBinding(null);
+      setUseServerProvider(false);
+    }
+    setAdapterType(id);
+    if (changed) setRunner("auto");
+    if (id === "opencode_local") setModel(DEFAULT_OPENCODE_LOCAL_MODEL);
+    else if (id === "gemini_local") setModel(DEFAULT_GEMINI_LOCAL_MODEL);
+    else if (id === "kimi_local") setModel(DEFAULT_KIMI_LOCAL_MODEL);
+    else if (id === "cursor") setModel(DEFAULT_CURSOR_LOCAL_MODEL);
+    else if (id !== "codex_local") setModel("");
+    setConnectPhase("collapsing");
   }
 
   /**
@@ -1492,7 +1567,8 @@ function OnboardingWizardInner({
    */
   const canvasOpen =
     sourceSelected &&
-    (credentialMode === "api" || connectCardSpace || connectStepHasNoSandbox);
+    !usesServerProvider &&
+    (credentialMode === "api" || credentialMode === "advanced" || connectCardSpace || connectStepHasNoSandbox);
 
   // The default (or a saved) adapterType can name an adapter the server has
   // since disabled — e.g. a cloud sandbox registry without claude_local. The
@@ -1504,7 +1580,7 @@ function OnboardingWizardInner({
     // external adapter is indistinguishable from a disabled one - and snapping
     // would replace the customer's choice with a built-in and persist it.
     if (!adapterRegistryLoaded) return;
-    const visible = [...recommendedAdapters, ...moreAdapters].filter(
+    const visible = [...recommendedAdapters, ...visibleMoreAdapters].filter(
       (a) => !a.comingSoon,
     );
     if (visible.length === 0) return;
@@ -1532,7 +1608,7 @@ function OnboardingWizardInner({
       return;
     }
     setModel("");
-  }, [adapterRegistryLoaded, recommendedAdapters, moreAdapters, adapterType]);
+  }, [adapterRegistryLoaded, recommendedAdapters, visibleMoreAdapters, adapterType]);
 
   const COMMAND_PLACEHOLDERS: Record<string, string> = {
     claude_local: "claude",
@@ -1661,6 +1737,8 @@ function OnboardingWizardInner({
     setForceUnsetAnthropicApiKey(false);
     setUnsetAnthropicLoading(false);
     setClaudeOAuthStatus(null);
+    setAdvancedBinding(null);
+    setUseServerProvider(false);
     setCreatedCompanyId(null);
     setCreatedCompanyPrefix(null);
     setCreatedAgentId(null);
@@ -1838,6 +1916,33 @@ function OnboardingWizardInner({
     }
   }
 
+  /**
+   * Remember the gateway connection this step created and adopt the first model
+   * it exposes.
+   *
+   * The binding contains only ids. The connection is read back because the
+   * binding does not carry the routing or its model list, and OpenCode needs a
+   * concrete `paperclip/<id>` for the run.
+   */
+  async function handleAdvancedConnection(
+    binding: Exclude<AiConnectionBinding, { mode: "responsible_user" }>,
+  ) {
+    setAdvancedBinding(binding);
+    if (!createdCompanyId) return;
+    try {
+      const result = await aiConnectionsApi.list(createdCompanyId);
+      const connection = result.connections.find((entry) => entry.id === binding.connectionId);
+      const routing = connection?.routing;
+      const firstModel = routing?.models?.[0]?.id;
+      if (routing && firstModel) {
+        setModel(aiRoutingModel(routing, adapterType, firstModel));
+      }
+    } catch {
+      // The connection exists; the model field stays editable and the
+      // environment probe below is the final check.
+    }
+  }
+
   function buildAdapterConfig(bindApiKey = false): Record<string, unknown> {
     const adapter = getUIAdapter(adapterType);
     const config = adapter.buildAdapterConfig({
@@ -1891,7 +1996,7 @@ function OnboardingWizardInner({
     // present. If storing failed this stays false, and the right outcome is a
     // configuration with no credential — which the hire then blocks on — rather
     // than one that quietly falls back to embedding the value.
-    if (!managedBindingForStep() && credentialMode === "api" && (bindApiKey || selectedApiKey)) {
+    if (!usesServerProvider && !managedBindingForStep() && credentialMode === "api" && (bindApiKey || selectedApiKey)) {
       const env =
         typeof config.env === "object" && config.env !== null && !Array.isArray(config.env)
           ? { ...(config.env as Record<string, unknown>) }
@@ -2109,28 +2214,35 @@ function OnboardingWizardInner({
           );
           return;
         }
-        if (adapterModelsError) {
-          setError(
-            adapterModelsError instanceof Error
-              ? adapterModelsError.message
-              : "Failed to load OpenCode models."
-          );
-          return;
-        }
-        if (adapterModelsLoading || adapterModelsFetching) {
-          setError(
-            "OpenCode models are still loading. Please wait and try again."
-          );
-          return;
-        }
-        const discoveredModels = adapterModels ?? [];
-        if (!discoveredModels.some((entry) => entry.id === selectedModelId)) {
-          setError(
-            discoveredModels.length === 0
-              ? "No OpenCode models discovered. Run `opencode models` and authenticate providers."
-              : `Configured OpenCode model is unavailable: ${selectedModelId}`
-          );
-          return;
+        // A Custom Gateway connection carries its own model list, and the
+        // runtime prefixes it (`paperclip/<id>`), so discovery on the host is
+        // neither available nor the authority for it. The same is true when the
+        // server supplies the provider: the host CLI is not what will run it.
+        // The environment probe below still verifies the route before the hire.
+        if (credentialMode !== "advanced" && !usesServerProvider) {
+          if (adapterModelsError) {
+            setError(
+              adapterModelsError instanceof Error
+                ? adapterModelsError.message
+                : "Failed to load OpenCode models."
+            );
+            return;
+          }
+          if (adapterModelsLoading || adapterModelsFetching) {
+            setError(
+              "OpenCode models are still loading. Please wait and try again."
+            );
+            return;
+          }
+          const discoveredModels = adapterModels ?? [];
+          if (!discoveredModels.some((entry) => entry.id === selectedModelId)) {
+            setError(
+              discoveredModels.length === 0
+                ? "No OpenCode models discovered. Run `opencode models` and authenticate providers."
+                : `Configured OpenCode model is unavailable: ${selectedModelId}`
+            );
+            return;
+          }
         }
       }
 
@@ -2152,11 +2264,11 @@ function OnboardingWizardInner({
       // hire describe it the same way — as a reference. A failure here stops the
       // hire rather than falling through to a configuration with no credential.
       let apiKeyStored = false;
-      if (credentialMode === "api" && !selectedApiKey && apiKey.trim()) {
+      if (!usesServerProvider && credentialMode === "api" && !selectedApiKey && apiKey.trim()) {
         apiKeyStored = await storeApiKeyUserSecret(createdCompanyId);
         if (!apiKeyStored || !isCurrent()) return;
       }
-      if (credentialMode !== "api" && canUseLocalLogin && managedProvider && !managedBindingForStep() && !savedSubscription && !savedKeys.storedLogin.data) {
+      if (credentialMode === "subscription" && canUseLocalLogin && managedProvider && !managedBindingForStep() && !savedSubscription && !savedKeys.storedLogin.data) {
         await localLogin.connect();
         if (!isCurrent()) return;
         managedSubscriptionRef.current = { companyId: createdCompanyId, binding: { provider: managedProvider, method: "subscription", mode: "responsible_user" } };
@@ -2736,33 +2848,120 @@ function OnboardingWizardInner({
 
                         Picking one starts the sign-in now. The row is the
                         question, and answering it is what opens the card. */}
-                    <ModelSourceTiles
-                      label="Model source"
-                      sources={recommendedAdapters.map((opt) => ({
-                        id: opt.type,
-                        label: CONNECT_SOURCE_NAMES[opt.type] ?? opt.label,
-                        icon: <ModelSourceMark type={opt.type} Fallback={opt.icon} />,
-                      }))}
-                      mode={credentialMode}
-                      selectedId={
-                        sourcePicked &&
-                        recommendedAdapters.some((opt) => opt.type === adapterType)
-                          ? adapterType
-                          : null
-                      }
-                      collapsed={connectCollapsed}
-                      settling={connectPhase === "unwindRow"}
-                      onSelect={(id) => {
-                        if (connectPhase !== "idle") return;
-                        autoConnectStartedRef.current = false;
-                        setSourcePicked(true);
-                        setAdapterType(id);
-                        if (id !== adapterType) setRunner("auto");
-                        if (id === "opencode_local") setModel(DEFAULT_OPENCODE_LOCAL_MODEL);
-                        else if (id !== "codex_local") setModel("");
-                        setConnectPhase("collapsing");
-                      }}
-                    />
+                    {connectCollapsed ? (
+                      // One row, one tile: the choice is made, and it may have
+                      // come from either row, so it is drawn from the union.
+                      <ModelSourceTiles
+                        label="Model source"
+                        sources={allAdapterChoices.map((opt) => ({
+                          id: opt.type,
+                          label: CONNECT_SOURCE_NAMES[opt.type] ?? opt.label,
+                          icon: <ModelSourceMark type={opt.type} Fallback={opt.icon} />,
+                        }))}
+                        mode={credentialMode}
+                        selectedId={adapterType}
+                        collapsed
+                        onSelect={selectSource}
+                      />
+                    ) : (
+                      <>
+                        <ModelSourceTiles
+                          label="Model source"
+                          sources={recommendedAdapters.map((opt) => ({
+                            id: opt.type,
+                            label: CONNECT_SOURCE_NAMES[opt.type] ?? opt.label,
+                            icon: <ModelSourceMark type={opt.type} Fallback={opt.icon} />,
+                          }))}
+                          mode={credentialMode}
+                          selectedId={null}
+                          settling={connectPhase === "unwindRow"}
+                          onSelect={selectSource}
+                        />
+
+                        {/*
+                          OpenCode is the only harness that speaks a plain Chat
+                          Completions gateway, and it is not a recommended tile.
+                          It (and the other managed-provider harnesses) live here
+                          so a custom endpoint can be chosen without leaving
+                          onboarding.
+                        */}
+                        {visibleMoreAdapters.length > 0 && (
+                          <details className="mt-4">
+                            <summary className="cursor-pointer text-sm text-muted-foreground">
+                              More adapters
+                            </summary>
+                            <div className="pt-3">
+                              <ModelSourceTiles
+                                label="More model sources"
+                                sources={visibleMoreAdapters.map((opt) => ({
+                                  id: opt.type,
+                                  label: CONNECT_SOURCE_NAMES[opt.type] ?? opt.label,
+                                  icon: <ModelSourceMark type={opt.type} Fallback={opt.icon} />,
+                                }))}
+                                mode={credentialMode}
+                                selectedId={null}
+                                settling={connectPhase === "unwindRow"}
+                                onSelect={selectSource}
+                              />
+                            </div>
+                          </details>
+                        )}
+                      </>
+                    )}
+
+                    {sourceSelected && adapterType === "opencode_local" && (
+                      <div className="mt-5 max-w-sm space-y-1.5">
+                        <Label htmlFor="onboarding-opencode-model" className="text-sm">
+                          Model
+                        </Label>
+                        <Input
+                          id="onboarding-opencode-model"
+                          value={model}
+                          onChange={(event) => setModel(event.target.value)}
+                          placeholder="provider/model"
+                          list="onboarding-opencode-model-options"
+                          disabled={loading || adapterEnvLoading}
+                        />
+                        <datalist id="onboarding-opencode-model-options">
+                          {(adapterModels ?? []).map((entry) => (
+                            <option key={entry.id} value={entry.id} />
+                          ))}
+                        </datalist>
+                        <p className="text-xs text-muted-foreground">
+                          Use the provider/model ID your OpenCode provider or
+                          gateway exposes, for example mass-in/sig-default.
+                        </p>
+                      </div>
+                    )}
+
+                    {sourceSelected && adapterType === "opencode_local" && (
+                      usesServerProvider ? (
+                        <p
+                          role="status"
+                          className="mt-3 flex flex-wrap items-center gap-x-3 text-sm text-muted-foreground"
+                        >
+                          Using the provider configured on this server.
+                          <button
+                            type="button"
+                            className="underline underline-offset-4 hover:text-foreground"
+                            onClick={() => setUseServerProvider(false)}
+                          >
+                            Use a credential instead
+                          </button>
+                        </p>
+                      ) : (
+                        <button
+                          type="button"
+                          className="mt-3 px-3 text-sm font-medium text-muted-foreground underline underline-offset-4 hover:text-foreground"
+                          onClick={() => {
+                            setUseServerProvider(true);
+                            setApiKey("");
+                          }}
+                        >
+                          Use the provider configured on this server
+                        </button>
+                      )
+                    )}
 
                     {/* Fades on the first beat but keeps its space until the
                         second, so pressing a tile moves nothing vertically.
@@ -2787,7 +2986,11 @@ function OnboardingWizardInner({
                       transition={{ opacity: SOURCE_LINK_EXIT, height: MAKE_ROOM }}
                     >
                       <div className="-ml-3 mt-1">
-                        <CredentialModeLink mode={credentialMode} onChange={setCredentialMode} />
+                        <CredentialModeLink
+                          mode={credentialMode}
+                          onChange={setCredentialMode}
+                          modes={["subscription", "api", "advanced"]}
+                        />
                         {savedKeys.options.length > 0 && <p className="px-3 text-sm text-muted-foreground">{savedKeys.options.length} saved API {savedKeys.options.length === 1 ? "key available" : "keys available"}.</p>}
                         {credentialMode === "subscription" && authSignalStatus === "present" && <p className="px-3 text-sm text-muted-foreground">An existing provider connection is available.</p>}
                       </div>
@@ -2835,6 +3038,43 @@ function OnboardingWizardInner({
                         <Loader2 className="size-4 animate-spin" />
                         {connectProgress}
                       </p>
+                    ) : credentialMode === "advanced" ? (
+                      createdCompanyId ? (
+                        advancedBinding ? (
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <p role="status" className="text-sm text-muted-foreground">
+                              Custom gateway connected.
+                            </p>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              onClick={() => setAdvancedBinding(null)}
+                            >
+                              Change
+                            </Button>
+                          </div>
+                        ) : (
+                          <AiProviderSetup
+                            companyId={createdCompanyId}
+                            initialProvider="gateway"
+                            initialProtocol={
+                              adapterType === "claude_local"
+                                ? "messages"
+                                : adapterType === "codex_local"
+                                  ? "responses"
+                                  : "chat"
+                            }
+                            advancedOnly
+                            onCancel={() => {
+                              setAdvancedBinding(null);
+                              setCredentialMode("api");
+                            }}
+                            onComplete={(binding) => {
+                              void handleAdvancedConnection(binding);
+                            }}
+                          />
+                        )
+                      ) : null
                     ) : credentialMode === "api" ? (
                       <OnboardingLoginCard
                         instruction={savedKeys.options.length ? "Choose a saved API key or enter a new one" : `Provide your ${

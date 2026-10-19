@@ -253,7 +253,6 @@ export function AiProviderSetup({
   const accessDefaults = !reconnect ? (
     <ConnectionAccessDefaults
       companyId={companyId}
-      extra={advanced ? modelSettings : undefined}
       agents={agents.data ?? []}
       sentence={connectionDefaultSummarySentence({ grantKind: ownership === "shared" ? "organization" : "user", authKind: auth === "none" ? "none" : "api_key", installChoice: allAgents ? "all" : "specific", installCount: agentIds.size })}
       capabilities={{ canCreateOrganizationGrant: canManageConnections, canSetCompanyInstall: canManageConnections }}
@@ -425,6 +424,7 @@ export function AiProviderSetup({
             )
           }
           {reconnect && <details><summary className="cursor-pointer text-sm text-muted-foreground">Model settings</summary>{modelSettings}</details>}
+          {!reconnect && advanced ? modelSettings : null}
           <p className="text-xs text-muted-foreground">
             Test the connection with your chosen model in the agent’s execution
             environment after connecting.

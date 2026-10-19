@@ -577,12 +577,19 @@ Google Gemini, a Responses API, Messages API, Chat Completions API, or local
 endpoint connection. Each row has its own Connect action and saved accounts.
 The catalog tags these entries `model-provider`; no category UI is shown.
 Responses-compatible gateways such as Emissary use the Responses API row.
-The native subscription/API-key onboarding remains the default. Provider choices
-show the existing local brand artwork and reuse the existing access step. Custom
-URLs, protocol, AWS region, and credential fields appear only after choosing the
-corresponding connector. New connections default to everyone in the organization
-and all agents when the actor has permission; the existing Advanced disclosure
-contains the controls to narrow access, without a separate Access step. New-agent setup also offers the connection picker in its persistent
+The native subscription/API-key onboarding remains the default. The connect step
+also offers **Use a custom gateway instead** (protocol, base URL, API key, and
+model IDs) without leaving onboarding. OpenCode is reachable under **More
+adapters**, and a deployment that sets `PAPERCLIP_OPENCODE_PROVIDERS` can choose
+**Use the provider configured on this server** instead of creating an AI
+connection. A gateway connection is still a normal AI connection: URLs and
+credentials belong to it, and OpenCode runs the model as `paperclip/<id>`.
+Provider choices show the existing local brand artwork and reuse the existing
+access step. Custom URLs, protocol, AWS region, and credential fields appear only
+after choosing the corresponding connector. New connections default to everyone
+in the organization and all agents when the actor has permission; the existing
+Advanced disclosure contains the controls to narrow access, without a separate
+Access step. New-agent setup also offers the connection picker in its persistent
 **Advanced / Custom Gateway** tile.
 
 At **Agents → [agent] → Harness / Runtime**, **Connection** is a dropdown of

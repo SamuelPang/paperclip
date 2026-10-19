@@ -52,7 +52,7 @@ export function ProviderConnectionPreview({ provider, initialMethod = "subscript
     <motion.div className="overflow-hidden" inert={phase !== "idle"} initial={false}
       animate={{ opacity: phase === "idle" ? 1 : 0, height: cardSpace ? 0 : "auto" }}
       transition={{ opacity: SOURCE_LINK_EXIT, height: MAKE_ROOM }}>
-      <div className="-ml-3 mt-1"><CredentialModeLink mode={method} onChange={setMethod} /></div>
+      <div className="-ml-3 mt-1"><CredentialModeLink mode={method} onChange={(next) => { if (next !== "advanced") setMethod(next); }} /></div>
     </motion.div>
     <motion.div className="overflow-hidden" inert={!live} initial={false}
       animate={{ height: cardSpace ? "auto" : 0, opacity: live ? 1 : 0 }}
